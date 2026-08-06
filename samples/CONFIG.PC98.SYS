@@ -1,0 +1,11 @@
+REM FreeDOS(98) configuration example for the PC-98 TSR client.
+REM The normal IME bridge client is a TSR loaded by AUTOEXEC.BAT.
+REM No DEVICE line is required for IME98TSR.COM.
+
+FILES=30
+BUFFERS=20
+LASTDRIVE=Z
+
+REM IME98.SYS is a diagnostic skeleton, not the interactive IME client.
+REM Enable this only when explicitly testing the device-driver diagnostics.
+REM DEVICE=Z:\IME98.SYS

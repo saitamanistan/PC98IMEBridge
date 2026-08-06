@@ -1,0 +1,35 @@
+# .NET and IDE output
+bin/
+obj/
+.vs/
+.vscode/
+.idea/
+.dotnet/
+*.user
+*.suo
+
+# DOS build and emulator scratch files
+build/
+release/
+dos/build/
+*.obj
+*.o
+*.lst
+*.map
+*.tmp
+*.hdi
+
+# Local logs and test captures
+*.log
+test-output/
+TSR.LOG
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+
+# Locally downloaded emulator sources and archives used for verification
+external/
+
+# One-off local disk-image surgery tool. Routine tests use the host share.
+tools/replace_fat16_root.py
