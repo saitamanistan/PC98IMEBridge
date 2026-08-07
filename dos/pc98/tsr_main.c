@@ -4,13 +4,13 @@
 unsigned short pc98_old_idle_vector[2];
 unsigned short pc98_old_input_vector[2];
 unsigned short pc98_old_serial_irq_vector[2];
-/* Kept for the diagnostic timer helpers, but no timer vector is installed. */
+/* Reserved vector storage enforced by tools/check_pc98_tsr_map.py. The INT
+   08h timer and INT 28h idle hooks are intentionally not installed; these
+   words stay inside the resident boundary for future/backup use. */
 unsigned short pc98_old_timer_vector[2];
 extern unsigned char pc98_tsr_resident_end;
 extern unsigned char pc98_tsr_bss_start;
 
-int pc98_install_idle(void);
-int pc98_restore_idle(void);
 int pc98_install_input(void);
 int pc98_restore_input(void);
 int pc98_install_serial_irq(void);

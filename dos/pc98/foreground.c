@@ -18,17 +18,11 @@ unsigned short pc98_bios_encode_key(const unsigned char *text,
                                     unsigned short *input);
 int pc98_bios_enqueue_word(unsigned short key);
 int pc98_bios_discard_hotkey_space(void);
-unsigned short pc98_timer_vector_offset(void);
-unsigned short pc98_timer_vector_segment(void);
-unsigned short pc98_timer_hook_offset(void);
-unsigned short pc98_code_segment(void);
 
 extern volatile unsigned short pc98_serial_irq_entry_count;
 extern volatile unsigned short pc98_serial_irq_rx_ready_count;
 extern volatile unsigned short pc98_serial_irq_stored_count;
 extern volatile unsigned short pc98_input_hook_count;
-extern volatile unsigned short pc98_timer_hook_count;
-extern volatile unsigned short pc98_timer_worker_count;
 extern volatile unsigned short pc98_input_ah00_count;
 extern volatile unsigned short pc98_input_ah01_count;
 extern volatile unsigned short pc98_input_ah02_count;
@@ -259,18 +253,6 @@ static void log_transport_diagnostics(void)
     pc98_debug_write_hex_word(pc98_input_ah05_count);
     pc98_debug_write("TSR DIAG INT18 OTHER ");
     pc98_debug_write_hex_word(pc98_input_other_count);
-    pc98_debug_write("TSR DIAG INT08 HOOK ");
-    pc98_debug_write_hex_word(pc98_timer_hook_count);
-    pc98_debug_write("TSR DIAG INT08 WORKER ");
-    pc98_debug_write_hex_word(pc98_timer_worker_count);
-    pc98_debug_write("TSR DIAG INT08 VECTOR SEG ");
-    pc98_debug_write_hex_word(pc98_timer_vector_segment());
-    pc98_debug_write("TSR DIAG INT08 VECTOR OFF ");
-    pc98_debug_write_hex_word(pc98_timer_vector_offset());
-    pc98_debug_write("TSR DIAG INT08 EXPECT SEG ");
-    pc98_debug_write_hex_word(pc98_code_segment());
-    pc98_debug_write("TSR DIAG INT08 EXPECT OFF ");
-    pc98_debug_write_hex_word(pc98_timer_hook_offset());
 }
 
 static void inject_pending_text(void)

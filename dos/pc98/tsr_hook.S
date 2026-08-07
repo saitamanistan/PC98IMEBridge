@@ -2,9 +2,6 @@
 .att_syntax prefix
 
 .text
-.global pc98_idle_hook
-.global pc98_install_idle
-.global pc98_restore_idle
 .global pc98_input_hook
 .global pc98_install_input
 .global pc98_restore_input
@@ -14,13 +11,6 @@
 .global pc98_restore_serial_irq
 .global pc98_uninstall_resident
 .global pc98_uninstall_prepare_entry
-.global pc98_timer_hook
-.global pc98_install_timer
-.global pc98_restore_timer
-.global pc98_timer_vector_offset
-.global pc98_timer_vector_segment
-.global pc98_timer_hook_offset
-.global pc98_code_segment
 .global pc98_worker_stack_top
 .extern pc98_service_foreground
 .extern pc98_service_returned_hotkey
@@ -37,39 +27,11 @@
 .extern pc98_serial_irq_rx_ready_count
 .extern pc98_serial_irq_stored_count
 .extern pc98_input_hook_count
-.extern pc98_timer_hook_count
-.extern pc98_timer_worker_count
 .extern pc98_input_ah00_count
 .extern pc98_input_ah01_count
 .extern pc98_input_ah02_count
 .extern pc98_input_ah05_count
 .extern pc98_input_other_count
-
-pc98_idle_hook:
-    pushf
-    pushw %ax
-    pushw %bx
-    pushw %cx
-    pushw %dx
-    pushw %si
-    pushw %di
-    pushw %bp
-    pushw %ds
-    pushw %es
-    pushw %cs
-    popw %ds
-    call pc98_service_foreground
-    popw %es
-    popw %ds
-    popw %bp
-    popw %di
-    popw %si
-    popw %dx
-    popw %cx
-    popw %bx
-    popw %ax
-    popf
-    ljmp *%cs:pc98_old_idle_vector
 
 pc98_input_hook:
     pushf
@@ -229,54 +191,6 @@ pc98_input_store_head:
 pc98_input_return:
     iret
 
-/* Run the verified np21w PC-98 INT 08h BIOS handler first so it acknowledges
-   the timer IRQ and performs the standard clock work.  Calling an interrupt
-   handler with PUSHF/LCALL lets its IRET return here.  The resident worker
-   then runs on its private stack with interrupts disabled. */
-pc98_timer_hook:
-    pushf
-    lcall *%cs:pc98_old_timer_vector
-    pushf
-    incw %cs:pc98_timer_hook_count
-    incw %cs:pc98_timer_worker_count
-    pushw %ax
-    pushw %bx
-    pushw %cx
-    pushw %dx
-    pushw %si
-    pushw %di
-    pushw %bp
-    pushw %ds
-    pushw %es
-    pushw %cs
-    popw %ds
-
-    cli
-    movw %ss, %ax
-    movw %ax, %cs:pc98_worker_old_ss
-    movw %sp, %cs:pc98_worker_old_sp
-    pushw %cs
-    popw %ss
-    movw $pc98_worker_stack_top, %sp
-    call pc98_service_foreground
-
-    cli
-    movw %cs:pc98_worker_old_ss, %ax
-    movw %cs:pc98_worker_old_sp, %bx
-    movw %ax, %ss
-    movw %bx, %sp
-    popw %es
-    popw %ds
-    popw %bp
-    popw %di
-    popw %si
-    popw %dx
-    popw %cx
-    popw %bx
-    popw %ax
-    popf
-    iret
-
 /* np21w rev103's BIOS keeps the raw key-down bitmap at physical 0000:052a
    and modifier state at 0000:053a.  The configured mask selects Shift
    (bit 0), Graph (bit 3), or Ctrl (bit 4).  Space (34h) maps to bitmap byte
@@ -424,52 +338,6 @@ pc98_uninstall_prepare_entry:
     popw %ax
     popf
     lret
-
-pc98_install_idle:
-    movw $0x3528, %ax
-    int $0x21
-    pushw %cs
-    popw %dx
-    pushw %es
-    popw %ax
-    cmpw %dx, %ax
-    jne pc98_install_idle_new
-    movw $pc98_idle_hook, %ax
-    cmpw %ax, %bx
-    jne pc98_install_idle_new
-    movw $1, %ax
-    ret
-
-pc98_install_idle_new:
-    movw %bx, pc98_old_idle_vector
-    movw %es, pc98_old_idle_vector+2
-    movw $0x2528, %ax
-    movw $pc98_idle_hook, %dx
-    int $0x21
-    xorw %ax, %ax
-    ret
-
-pc98_restore_idle:
-    movw $0x3528, %ax
-    int $0x21
-    pushw %cs
-    popw %dx
-    pushw %es
-    popw %ax
-    cmpw %dx, %ax
-    jne pc98_restore_idle_not_owner
-    movw $pc98_idle_hook, %ax
-    cmpw %ax, %bx
-    jne pc98_restore_idle_not_owner
-    movw $0x2528, %ax
-    movw $pc98_old_idle_vector, %dx
-    int $0x21
-    xorw %ax, %ax
-    ret
-
-pc98_restore_idle_not_owner:
-    movw $1, %ax
-    ret
 
 pc98_install_input:
     movw $0x3518, %ax
@@ -647,71 +515,6 @@ pc98_uninstall_return:
     popw %di
     popw %si
     popw %bp
-    ret
-
-pc98_install_timer:
-    movw $0x3508, %ax
-    int $0x21
-    movw $pc98_timer_hook, %ax
-    cmpw %ax, %bx
-    jne pc98_install_timer_new
-    movw $1, %ax
-    ret
-
-pc98_install_timer_new:
-    movw %bx, pc98_old_timer_vector
-    movw %es, pc98_old_timer_vector+2
-    movw $0x2508, %ax
-    movw $pc98_timer_hook, %dx
-    int $0x21
-    xorw %ax, %ax
-    ret
-
-pc98_restore_timer:
-    movw $0x3508, %ax
-    int $0x21
-    pushw %cs
-    popw %dx
-    pushw %es
-    popw %ax
-    cmpw %dx, %ax
-    jne pc98_restore_timer_not_owner
-    movw $pc98_timer_hook, %ax
-    cmpw %ax, %bx
-    jne pc98_restore_timer_not_owner
-    movw $0x2508, %ax
-    movw $pc98_old_timer_vector, %dx
-    int $0x21
-    xorw %ax, %ax
-    ret
-
-pc98_restore_timer_not_owner:
-    movw $1, %ax
-    ret
-
-pc98_timer_vector_offset:
-    pushw %es
-    xorw %ax, %ax
-    movw %ax, %es
-    movw %es:0x0020, %ax
-    popw %es
-    ret
-
-pc98_timer_vector_segment:
-    pushw %es
-    xorw %ax, %ax
-    movw %ax, %es
-    movw %es:0x0022, %ax
-    popw %es
-    ret
-
-pc98_timer_hook_offset:
-    movw $pc98_timer_hook, %ax
-    ret
-
-pc98_code_segment:
-    pushw %cs
-    popw %ax
     ret
 
 .bss

@@ -6,8 +6,6 @@ volatile unsigned short pc98_serial_irq_entry_count;
 volatile unsigned short pc98_serial_irq_rx_ready_count;
 volatile unsigned short pc98_serial_irq_stored_count;
 volatile unsigned short pc98_input_hook_count;
-volatile unsigned short pc98_timer_hook_count;
-volatile unsigned short pc98_timer_worker_count;
 volatile unsigned short pc98_input_ah00_count;
 volatile unsigned short pc98_input_ah01_count;
 volatile unsigned short pc98_input_ah02_count;
