@@ -241,12 +241,16 @@ internal sealed class BridgeForm : Form
 
     private async void FocusPc98()
     {
-        // CLOSE can arrive while the Shift+Space key-down that requested it
+        // CLOSE can arrive while the hotkey key-down that requested it
         // is still being dispatched to the bridge. Moving focus before the
         // corresponding key-up lets Windows restore focus to the bridge.
-        // Wait for Shift release, then verify once after the message settles.
+        // Wait for the host-visible modifier (Shift, Ctrl, or Alt) to be
+        // released, then verify once after the message settles. The TSR
+        // supports SHIFT+SPACE, CTRL+SPACE, and GRAPH+SPACE; on np21w rev103
+        // Windows Alt (VK_MENU) is delivered to the guest as the PC-98 GRPH
+        // key (win9x/winkbd.cpp key106[0x12]=0x73, keystat.tbl 0x73=GRPH/ALT).
         for (int attempt = 0;
-             attempt < 50 && (GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0;
+             attempt < 50 && HotkeyModifierStillDown();
              ++attempt)
             await Task.Delay(20);
         await Task.Delay(50);
@@ -272,6 +276,14 @@ internal sealed class BridgeForm : Form
                 Log(focused ? "Returned to np21w" : "Could not return focus to np21w");
             });
         });
+    }
+
+    private static bool HotkeyModifierStillDown()
+    {
+        const int highBit = 0x8000;
+        return (GetAsyncKeyState((int)Keys.ShiftKey) & highBit) != 0
+            || (GetAsyncKeyState((int)Keys.ControlKey) & highBit) != 0
+            || (GetAsyncKeyState((int)Keys.Menu) & highBit) != 0;
     }
 
     private static bool ForceForegroundWindow(IntPtr targetWindow)
