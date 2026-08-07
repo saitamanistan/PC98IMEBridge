@@ -34,9 +34,11 @@ normal release binaries.
   messages.
 - Esc clears non-empty local text. With an empty field it sends CLOSE_IME.
 - CLOSE_IME returns focus to the `np21x64w` window after the corresponding
-  host-visible modifier key is released. Only `Shift` and `Ctrl` have Windows
-  keys that can be awaited; `GRAPH+SPACE` has no Windows modifier, so no key-up
-  wait is performed for it.
+  host-visible modifier key is released. The TSR hotkeys are SHIFT+SPACE,
+  CTRL+SPACE, and GRAPH+SPACE. On np21w rev103
+  (`win9x/winkbd.cpp` `key106[0x12]=0x73`, `keystat.tbl` `0x73=GRPH/ALT`),
+  Windows Alt (VK_MENU) is delivered to the guest as the PC-98 GRPH key, so
+  the bridge waits for Shift, Ctrl, and Alt to be released.
 - The bridge waits for TEXT_ACK or KEY_ACK before accepting another send.
 - The `Activity` checkbox expands or hides a plain-language activity history.
   It is hidden by default.

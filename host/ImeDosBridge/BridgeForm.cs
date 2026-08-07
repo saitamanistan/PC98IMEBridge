@@ -260,9 +260,11 @@ internal sealed class BridgeForm : Form
         // is still being dispatched to the bridge. Moving focus before the
         // corresponding key-up lets Windows restore focus to the bridge.
         // Wait for the configured modifier to be released, then verify once
-        // after the message settles. Only Shift and Ctrl have host-visible
-        // Windows keys among the TSR hotkeys (SHIFT+SPACE, CTRL+SPACE);
-        // Graph+SPACE has no Windows modifier, so nothing is awaited for it.
+        // after the message settles. The TSR hotkeys are SHIFT+SPACE,
+        // CTRL+SPACE, and GRAPH+SPACE. On np21w rev103 (win9x/winkbd.cpp
+        // key106[0x12]=0x73, keystat.tbl 0x73=GRPH/ALT), Windows Alt (VK_MENU)
+        // is delivered to the guest as the PC-98 GRPH key, so Alt is a
+        // host-visible modifier to wait for alongside Shift and Ctrl.
         for (int attempt = 0;
              attempt < 50 && HotkeyModifierStillDown();
              ++attempt)
@@ -296,7 +298,8 @@ internal sealed class BridgeForm : Form
     {
         const int highBit = 0x8000;
         return (GetAsyncKeyState((int)Keys.ShiftKey) & highBit) != 0
-            || (GetAsyncKeyState((int)Keys.ControlKey) & highBit) != 0;
+            || (GetAsyncKeyState((int)Keys.ControlKey) & highBit) != 0
+            || (GetAsyncKeyState((int)Keys.Menu) & highBit) != 0;
     }
 
     private static bool ForceForegroundWindow(IntPtr targetWindow)

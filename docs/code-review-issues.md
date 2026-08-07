@@ -38,7 +38,7 @@
 - 内容: `GetAsyncKeyState(Keys.ShiftKey)` 固定で、Ctrl/Graph ホットキー設定時はそのキーのリリースを待たずにフォーカス移動する。
 - 影響: `CTRL+SPACE` / `GRAPH+SPACE` 設定時に「戻ってから再度 IME が開く」競合が起き得る。
 - 対処: 設定中のモディファイアに応じて待つキーを切り替える。
-- 対応: `HotkeyModifierStillDown()` を追加し、ホスト可視の `Shift`/`Ctrl` モディファイアのリリースを待つように拡張。レビュー指摘を受け、Windows 仮想キーが存在しない `Graph` と根拠のない `Alt` は待ち対象から除外した（`GRAPH+SPACE` はホスト側に待つキーが無いため待ちなし、`docs/host-bridge.md` に明記）。
+- 対応: `HotkeyModifierStillDown()` を追加し、ホスト可視の `Shift`/`Ctrl`/`Alt` モディファイアのリリースを待つよう拡張。一旦 Graph/Alt を外したがレビュー指摘を受け、np21w rev103 では Windows Alt(VK_MENU)=0x12 が PC-98 GRPH(0x73)へ変換される（`win9x/winkbd.cpp key106[0x12]=0x73`, `keystat.tbl 0x73=GRPH/ALT`）ことをソースで確認し、`Keys.Menu`(Alt)を待機対象へ復元。根拠は `docs/np21w-source-verification.md` と `docs/host-bridge.md` に記録。
 
 ---
 
