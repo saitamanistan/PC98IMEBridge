@@ -93,13 +93,28 @@ internal sealed class BridgeForm : Form
         Text = "Activity",
         Checked = false
     };
-    private readonly object sendLock = new();
-    private volatile Stream? stream;
-    private ushort openSequence;
-    private bool imeReady;
-    private int targetMaxTextBytes = Packet.MaxPayload;
+    /* Connection and its protocol state belong to one session object. The
+       listener builds a fully-initialized session and publishes it atomically
+       (volatile reference), and every state transition plus send is serialized
+       under the same session lock the UI thread uses. This prevents a UI send
+       racing a new connection from using stale sequence/ready state. */
+    private volatile BridgeSession? session;
     private CancellationTokenSource cancellation = new();
     private string lastStatus = "Waiting for PC-98";
+
+    private sealed class BridgeSession
+    {
+        public readonly Stream Stream;
+        public object Gate => Stream;
+        public ushort OpenSequence;
+        public bool ImeReady;
+        public int TargetMaxTextBytes = Packet.MaxPayload;
+
+        public BridgeSession(Stream stream)
+        {
+            Stream = stream;
+        }
+    }
 
     public BridgeForm(int port, string? pipeName = null, bool pipeClient = false,
                       string? debugPipeName = null, byte[]? automaticText = null)
@@ -245,9 +260,9 @@ internal sealed class BridgeForm : Form
         // is still being dispatched to the bridge. Moving focus before the
         // corresponding key-up lets Windows restore focus to the bridge.
         // Wait for the configured modifier to be released, then verify once
-        // after the message settles. The TSR supports Shift, Ctrl, and Graph
-        // (+Space); Graph has no Windows virtual key, so Shift/Ctrl/Alt cover
-        // the host-visible modifiers.
+        // after the message settles. Only Shift and Ctrl have host-visible
+        // Windows keys among the TSR hotkeys (SHIFT+SPACE, CTRL+SPACE);
+        // Graph+SPACE has no Windows modifier, so nothing is awaited for it.
         for (int attempt = 0;
              attempt < 50 && HotkeyModifierStillDown();
              ++attempt)
@@ -281,8 +296,7 @@ internal sealed class BridgeForm : Form
     {
         const int highBit = 0x8000;
         return (GetAsyncKeyState((int)Keys.ShiftKey) & highBit) != 0
-            || (GetAsyncKeyState((int)Keys.ControlKey) & highBit) != 0
-            || (GetAsyncKeyState((int)Keys.Menu) & highBit) != 0;
+            || (GetAsyncKeyState((int)Keys.ControlKey) & highBit) != 0;
     }
 
     private static bool ForceForegroundWindow(IntPtr targetWindow)
@@ -380,155 +394,163 @@ internal sealed class BridgeForm : Form
 
     private async Task ServeAsync(Stream connected, string description, CancellationToken token)
     {
-        stream = connected;
-        openSequence = 0;
-        imeReady = false;
-        targetMaxTextBytes = Packet.MaxPayload;
+        var current = new BridgeSession(connected);
+        session = current;
         SetStatus($"Connected: {description}");
         try
         {
             while (!token.IsCancellationRequested)
             {
                 Packet packet = await ReadPacketAsync(connected);
-                if (packet.Type == Hello)
+                lock (current.Gate)
                 {
-                    targetMaxTextBytes = packet.Payload.Length >= 10
-                        ? BitConverter.ToUInt16(packet.Payload, 8)
-                        : Packet.MaxPayload;
-                    if (targetMaxTextBytes <= 0 || targetMaxTextBytes > Packet.MaxPayload)
-                        targetMaxTextBytes = Packet.MaxPayload;
-                    SetStatus("PC-98 connection confirmed");
-                    SetTarget(packet.Payload.Length > 0 && packet.Payload[0] == 1
-                        ? "PC-98" : "Unknown");
-                    SendAsync(connected, new Packet(Pong, packet.Sequence, Array.Empty<byte>()));
-                }
-                else if (packet.Type == Ping)
-                {
-                    SendAsync(connected, new Packet(Pong, packet.Sequence, Array.Empty<byte>()));
-                }
-                else if (packet.Type == OpenIme)
-                {
-                    openSequence = packet.Sequence;
-                    imeReady = true;
-                    SetStatus("Input ready");
-                    if (automaticText is not null)
+                    if (packet.Type == Hello)
                     {
-                        if (automaticText.Length > targetMaxTextBytes)
+                        current.TargetMaxTextBytes = packet.Payload.Length >= 10
+                            ? BitConverter.ToUInt16(packet.Payload, 8)
+                            : Packet.MaxPayload;
+                        if (current.TargetMaxTextBytes <= 0 || current.TargetMaxTextBytes > Packet.MaxPayload)
+                            current.TargetMaxTextBytes = Packet.MaxPayload;
+                        SetStatus("PC-98 connection confirmed");
+                        SetTarget(packet.Payload.Length > 0 && packet.Payload[0] == 1
+                            ? "PC-98" : "Unknown");
+                        Send(connected, new Packet(Pong, packet.Sequence, Array.Empty<byte>()));
+                    }
+                    else if (packet.Type == Ping)
+                    {
+                        Send(connected, new Packet(Pong, packet.Sequence, Array.Empty<byte>()));
+                    }
+                    else if (packet.Type == OpenIme)
+                    {
+                        current.OpenSequence = packet.Sequence;
+                        current.ImeReady = true;
+                        SetStatus("Input ready");
+                        if (automaticText is not null)
                         {
-                            SetStatus($"Automatic text is too long: {automaticText.Length}/{targetMaxTextBytes} bytes");
-                            continue;
+                            if (automaticText.Length > current.TargetMaxTextBytes)
+                            {
+                                SetStatus($"Automatic text is too long: {automaticText.Length}/{current.TargetMaxTextBytes} bytes");
+                                continue;
+                            }
+                            Send(connected,
+                                new Packet(TextMessage, current.OpenSequence, automaticText));
+                            SetStatus("Automatic text sent");
                         }
-                        SendAsync(connected,
-                            new Packet(TextMessage, openSequence, automaticText));
-                        SetStatus("Automatic text sent");
+                        else
+                        {
+                            FocusBridgeInput();
+                        }
                     }
-                    else
+                    else if (packet.Type == CloseIme)
                     {
-                        FocusBridgeInput();
+                        current.OpenSequence = 0;
+                        current.ImeReady = false;
+                        BeginInvoke(() => input.Clear());
+                        SetStatus("Input cancelled");
+                        FocusPc98();
                     }
-                }
-                else if (packet.Type == CloseIme)
-                {
-                    openSequence = 0;
-                    imeReady = false;
-                    BeginInvoke(() => input.Clear());
-                    SetStatus("Input cancelled");
-                    FocusPc98();
-                }
-                else if (packet.Type == TextAck)
-                {
-                    openSequence = 0;
-                    imeReady = false;
-                    SetStatus("PC-98 received text");
-                }
-                else if (packet.Type == KeyAck)
-                {
-                    openSequence = 0;
-                    imeReady = false;
-                    SetStatus("PC-98 received key");
+                    else if (packet.Type == TextAck)
+                    {
+                        current.OpenSequence = 0;
+                        current.ImeReady = false;
+                        SetStatus("PC-98 received text");
+                    }
+                    else if (packet.Type == KeyAck)
+                    {
+                        current.OpenSequence = 0;
+                        current.ImeReady = false;
+                        SetStatus("PC-98 received key");
+                    }
                 }
             }
         }
         finally
         {
-            // A reconnect can replace stream before the previous ServeAsync
-            // reaches its finally block. Do not clear the newer connection.
-            if (ReferenceEquals(stream, connected))
-            {
-                stream = null;
-                openSequence = 0;
-                imeReady = false;
-                targetMaxTextBytes = Packet.MaxPayload;
-            }
+            // A reconnect can replace session before the previous ServeAsync
+            // reaches its finally block. Do not clear the newer session.
+            if (ReferenceEquals(session, current))
+                session = null;
         }
     }
 
     private void SendText()
     {
-        var current = stream;
-        if (current is null || !imeReady || string.IsNullOrEmpty(input.Text)) return;
-        var bytes = Encoding.GetEncoding(932).GetBytes(input.Text);
-        if (bytes.Length > targetMaxTextBytes)
+        var current = session;
+        if (current is null) return;
+        lock (current.Gate)
         {
-            SetStatus($"Text is too long: {bytes.Length}/{targetMaxTextBytes} CP932 bytes");
-            return;
-        }
-        try
-        {
-            imeReady = false;
-            SendAsync(current, new Packet(TextMessage, openSequence, bytes));
-            input.Clear();
-            SetStatus("Text sent; waiting for acknowledgement");
-        }
-        catch (Exception ex)
-        {
-            imeReady = true;
-            SetStatus($"Send error: {ex.Message}");
+            if (!current.ImeReady || string.IsNullOrEmpty(input.Text)) return;
+            var bytes = Encoding.GetEncoding(932).GetBytes(input.Text);
+            if (bytes.Length > current.TargetMaxTextBytes)
+            {
+                SetStatus($"Text is too long: {bytes.Length}/{current.TargetMaxTextBytes} CP932 bytes");
+                return;
+            }
+            try
+            {
+                current.ImeReady = false;
+                Send(current.Stream, new Packet(TextMessage, current.OpenSequence, bytes));
+                input.Clear();
+                SetStatus("Text sent; waiting for acknowledgement");
+            }
+            catch (Exception ex)
+            {
+                current.ImeReady = true;
+                SetStatus($"Send error: {ex.Message}");
+            }
         }
     }
 
     private void SendKey(byte keyCode, string keyName)
     {
-        var current = stream;
-        if (current is null || !imeReady)
-            return;
-        try
+        var current = session;
+        if (current is null) return;
+        lock (current.Gate)
         {
-            imeReady = false;
-            SendAsync(current,
-                new Packet(KeyMessage, openSequence, new[] { keyCode }));
-            SetStatus($"{keyName} sent; waiting for acknowledgement");
-        }
-        catch (Exception ex)
-        {
-            imeReady = true;
-            SetStatus($"Key send error: {ex.Message}");
+            if (!current.ImeReady)
+                return;
+            try
+            {
+                current.ImeReady = false;
+                Send(current.Stream,
+                    new Packet(KeyMessage, current.OpenSequence, new[] { keyCode }));
+                SetStatus($"{keyName} sent; waiting for acknowledgement");
+            }
+            catch (Exception ex)
+            {
+                current.ImeReady = true;
+                SetStatus($"Key send error: {ex.Message}");
+            }
         }
     }
 
     private void SendCloseIme()
     {
-        var current = stream;
-        if (current is null || !imeReady)
-            return;
-        try
+        var current = session;
+        if (current is null) return;
+        lock (current.Gate)
         {
-            imeReady = false;
-            SendAsync(current,
-                new Packet(CloseIme, openSequence, Array.Empty<byte>()));
-            SetStatus("IME off requested by Escape");
-        }
-        catch (Exception ex)
-        {
-            imeReady = true;
-            SetStatus($"IME off request error: {ex.Message}");
+            if (!current.ImeReady)
+                return;
+            try
+            {
+                current.ImeReady = false;
+                Send(current.Stream,
+                    new Packet(CloseIme, current.OpenSequence, Array.Empty<byte>()));
+                SetStatus("IME off requested by Escape");
+            }
+            catch (Exception ex)
+            {
+                current.ImeReady = true;
+                SetStatus($"IME off request error: {ex.Message}");
+            }
         }
     }
 
-    private void SendAsync(Stream current, Packet packet)
+    private void Send(Stream current, Packet packet)
     {
         var wire = packet.Encode();
-        lock (sendLock)
+        lock (current)
         {
             current.Write(wire, 0, wire.Length);
             current.Flush();

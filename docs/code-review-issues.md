@@ -31,14 +31,14 @@
 - 内容: UI スレッドとリスナースレッド両方から読み、`ServeAsync` が null/差し替えするが `volatile` でもロックでもない。
 - 影響: 再接続時に race があり得る。`SendAsync(Stream, ...)` 側は接続済みローカルを使うので実害は小さい。
 - 対処: `volatile` 化、もしくは公開をスレッドローカル/接続ハンドル経由に変更。
-- 対応: `stream` フィールドを `volatile` 化。
+- 対応: 初回は `stream` を `volatile` 化。レビュー指摘を受け、接続とプロトコル状態(`Stream`/`OpenSequence`/`ImeReady`/`TargetMaxTextBytes`)を単一の `BridgeSession` オブジェクトに集約し、リスナーは**初期化済みセッションを volatile 参照で原子的に公開**、状態遷移と送信は同一セッションのロックで直列化する方式に改めた。
 
 ### 4. `FocusPc98` は Shift リリースのみ待つ — **[対応済み]**
 - 場所: `host/ImeDosBridge/BridgeForm.cs:248-251`
 - 内容: `GetAsyncKeyState(Keys.ShiftKey)` 固定で、Ctrl/Graph ホットキー設定時はそのキーのリリースを待たずにフォーカス移動する。
 - 影響: `CTRL+SPACE` / `GRAPH+SPACE` 設定時に「戻ってから再度 IME が開く」競合が起き得る。
 - 対処: 設定中のモディファイアに応じて待つキーを切り替える。
-- 対応: `HotkeyModifierStillDown()` を追加し、Shift/Ctrl/Alt のホスト可視モディファイアのリリースを待つよう拡張（Graph は Windows 仮想キーが無い旨をコメントで明記）。
+- 対応: `HotkeyModifierStillDown()` を追加し、ホスト可視の `Shift`/`Ctrl` モディファイアのリリースを待つように拡張。レビュー指摘を受け、Windows 仮想キーが存在しない `Graph` と根拠のない `Alt` は待ち対象から除外した（`GRAPH+SPACE` はホスト側に待つキーが無いため待ちなし、`docs/host-bridge.md` に明記）。
 
 ---
 
