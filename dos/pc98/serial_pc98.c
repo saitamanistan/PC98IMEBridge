@@ -1,5 +1,8 @@
 #include <stdint.h>
 
+#define PC98_CONFIG_READ_SIZE 64
+#define PC98_CONFIG_LINE_SIZE 128
+
 static int serial_opened;
 volatile unsigned short pc98_serial_data_port = 0x0030;
 volatile unsigned short pc98_serial_status_port = 0x0032;
@@ -114,22 +117,54 @@ static void dos_close(uint16_t handle)
 int pc98_serial_load_config(void)
 {
     static const char name[] = "IME98.CFG";
-    unsigned char buffer[256];
+    unsigned char read_buffer[PC98_CONFIG_READ_SIZE];
+    unsigned char line[PC98_CONFIG_LINE_SIZE];
     unsigned short length;
-    unsigned short start = 0;
+    unsigned short position;
+    unsigned short line_length = 0;
+    unsigned char line_overflow = 0;
+    unsigned char line_started = 0;
+    unsigned char line_comment = 0;
     int handle = dos_open_readonly(name);
     if (handle < 0) return 0;
-    length = dos_read((uint16_t)handle, buffer, sizeof(buffer) - 1);
+
+    for (;;) {
+        length = dos_read((uint16_t)handle, read_buffer, sizeof(read_buffer));
+        if (!length)
+            break;
+        for (position = 0; position < length; ++position) {
+            unsigned char value = read_buffer[position];
+            if (value == '\r' || value == '\n') {
+                if (!line_overflow && !line_comment) {
+                    line[line_length] = 0;
+                    parse_config_line(line);
+                }
+                line_length = 0;
+                line_overflow = 0;
+                line_started = 0;
+                line_comment = 0;
+            } else if (!line_overflow && !line_comment) {
+                if (!line_started) {
+                    if (value == ' ' || value == '\t')
+                        continue;
+                    line_started = 1;
+                    if (value == ';' || value == '#') {
+                        line_comment = 1;
+                        continue;
+                    }
+                }
+                if (line_length + 1 < sizeof(line))
+                    line[line_length++] = value;
+                else
+                    line_overflow = 1;
+            }
+        }
+    }
     dos_close((uint16_t)handle);
-    buffer[length] = 0;
-    while (start < length) {
-        unsigned short end = start;
-        while (end < length && buffer[end] != '\r' && buffer[end] != '\n') ++end;
-        if (end < length)
-            buffer[end++] = 0;
-        parse_config_line(buffer + start);
-        while (end < length && (buffer[end] == '\r' || buffer[end] == '\n')) ++end;
-        start = end;
+
+    if (line_length && !line_overflow && !line_comment) {
+        line[line_length] = 0;
+        parse_config_line(line);
     }
     return 1;
 }
