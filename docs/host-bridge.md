@@ -33,8 +33,11 @@ normal release binaries.
 - With an empty input field, Enter, Backspace, and cursor keys are sent as KEY
   messages.
 - Esc clears non-empty local text. With an empty field it sends CLOSE_IME.
-- CLOSE_IME returns focus to the `np21x64w` window after the initiating Shift
-  key is released.
+- CLOSE_IME returns focus to the `np21x64w` window after the corresponding
+  host-visible modifier (Shift, Ctrl, or Alt) is released. The TSR hotkeys are
+  SHIFT+SPACE, CTRL+SPACE, and GRAPH+SPACE; on np21w rev103 Windows Alt
+  (VK_MENU) is delivered to the guest as the PC-98 GRPH key
+  (`win9x/winkbd.cpp` `key106[0x12]=0x73`, `keystat.tbl` `0x73=GRPH/ALT`).
 - The bridge waits for TEXT_ACK or KEY_ACK before accepting another send.
 - The `Activity` checkbox expands or hides a plain-language activity history.
   It is hidden by default.
