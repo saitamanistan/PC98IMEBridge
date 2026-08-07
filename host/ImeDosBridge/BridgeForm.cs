@@ -94,7 +94,7 @@ internal sealed class BridgeForm : Form
         Checked = false
     };
     private readonly object sendLock = new();
-    private Stream? stream;
+    private volatile Stream? stream;
     private ushort openSequence;
     private bool imeReady;
     private int targetMaxTextBytes = Packet.MaxPayload;
@@ -241,12 +241,15 @@ internal sealed class BridgeForm : Form
 
     private async void FocusPc98()
     {
-        // CLOSE can arrive while the Shift+Space key-down that requested it
+        // CLOSE can arrive while the hotkey key-down that requested it
         // is still being dispatched to the bridge. Moving focus before the
         // corresponding key-up lets Windows restore focus to the bridge.
-        // Wait for Shift release, then verify once after the message settles.
+        // Wait for the configured modifier to be released, then verify once
+        // after the message settles. The TSR supports Shift, Ctrl, and Graph
+        // (+Space); Graph has no Windows virtual key, so Shift/Ctrl/Alt cover
+        // the host-visible modifiers.
         for (int attempt = 0;
-             attempt < 50 && (GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0;
+             attempt < 50 && HotkeyModifierStillDown();
              ++attempt)
             await Task.Delay(20);
         await Task.Delay(50);
@@ -272,6 +275,14 @@ internal sealed class BridgeForm : Form
                 Log(focused ? "Returned to np21w" : "Could not return focus to np21w");
             });
         });
+    }
+
+    private static bool HotkeyModifierStillDown()
+    {
+        const int highBit = 0x8000;
+        return (GetAsyncKeyState((int)Keys.ShiftKey) & highBit) != 0
+            || (GetAsyncKeyState((int)Keys.ControlKey) & highBit) != 0
+            || (GetAsyncKeyState((int)Keys.Menu) & highBit) != 0;
     }
 
     private static bool ForceForegroundWindow(IntPtr targetWindow)
@@ -389,11 +400,11 @@ internal sealed class BridgeForm : Form
                     SetStatus("PC-98 connection confirmed");
                     SetTarget(packet.Payload.Length > 0 && packet.Payload[0] == 1
                         ? "PC-98" : "Unknown");
-                    await SendAsync(connected, new Packet(Pong, packet.Sequence, Array.Empty<byte>()));
+                    SendAsync(connected, new Packet(Pong, packet.Sequence, Array.Empty<byte>()));
                 }
                 else if (packet.Type == Ping)
                 {
-                    await SendAsync(connected, new Packet(Pong, packet.Sequence, Array.Empty<byte>()));
+                    SendAsync(connected, new Packet(Pong, packet.Sequence, Array.Empty<byte>()));
                 }
                 else if (packet.Type == OpenIme)
                 {
@@ -407,7 +418,7 @@ internal sealed class BridgeForm : Form
                             SetStatus($"Automatic text is too long: {automaticText.Length}/{targetMaxTextBytes} bytes");
                             continue;
                         }
-                        await SendAsync(connected,
+                        SendAsync(connected,
                             new Packet(TextMessage, openSequence, automaticText));
                         SetStatus("Automatic text sent");
                     }
@@ -452,7 +463,7 @@ internal sealed class BridgeForm : Form
         }
     }
 
-    private async void SendText()
+    private void SendText()
     {
         var current = stream;
         if (current is null || !imeReady || string.IsNullOrEmpty(input.Text)) return;
@@ -465,7 +476,7 @@ internal sealed class BridgeForm : Form
         try
         {
             imeReady = false;
-            await SendAsync(current, new Packet(TextMessage, openSequence, bytes));
+            SendAsync(current, new Packet(TextMessage, openSequence, bytes));
             input.Clear();
             SetStatus("Text sent; waiting for acknowledgement");
         }
@@ -476,7 +487,7 @@ internal sealed class BridgeForm : Form
         }
     }
 
-    private async void SendKey(byte keyCode, string keyName)
+    private void SendKey(byte keyCode, string keyName)
     {
         var current = stream;
         if (current is null || !imeReady)
@@ -484,7 +495,7 @@ internal sealed class BridgeForm : Form
         try
         {
             imeReady = false;
-            await SendAsync(current,
+            SendAsync(current,
                 new Packet(KeyMessage, openSequence, new[] { keyCode }));
             SetStatus($"{keyName} sent; waiting for acknowledgement");
         }
@@ -495,7 +506,7 @@ internal sealed class BridgeForm : Form
         }
     }
 
-    private async void SendCloseIme()
+    private void SendCloseIme()
     {
         var current = stream;
         if (current is null || !imeReady)
@@ -503,7 +514,7 @@ internal sealed class BridgeForm : Form
         try
         {
             imeReady = false;
-            await SendAsync(current,
+            SendAsync(current,
                 new Packet(CloseIme, openSequence, Array.Empty<byte>()));
             SetStatus("IME off requested by Escape");
         }
@@ -514,13 +525,7 @@ internal sealed class BridgeForm : Form
         }
     }
 
-    private async Task SendAsync(Packet packet)
-    {
-        var current = stream ?? throw new IOException("No client connected.");
-        await SendAsync(current, packet);
-    }
-
-    private async Task SendAsync(Stream current, Packet packet)
+    private void SendAsync(Stream current, Packet packet)
     {
         var wire = packet.Encode();
         lock (sendLock)
@@ -528,7 +533,6 @@ internal sealed class BridgeForm : Form
             current.Write(wire, 0, wire.Length);
             current.Flush();
         }
-        await Task.CompletedTask;
     }
 
     private async Task<Packet> ReadPacketAsync(Stream stream)
